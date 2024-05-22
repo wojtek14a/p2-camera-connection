@@ -10,6 +10,7 @@ import { CamCtlCommands } from './camCtl';
 export class P2CameraConnection extends EventEmitter<P2Events> {
     private tcpClient: net.Socket;
     private udpClient: any = null;
+    private udpIsOpen: boolean = false;
 
     private tcpConnectionState: TcpConnectionState = TcpConnectionState.Disconnected;
 
@@ -27,11 +28,12 @@ export class P2CameraConnection extends EventEmitter<P2Events> {
         private port: number,
         private username: string,
         private password: string,
-        private reconnectInterval: number = 100
+        private reconnectInterval: number = 100,
+        private customUdpClient: any = null
     ) {
         super();
         
-        this.camCtl = new CamCtlCommands(this);
+        this.camCtl = new CamCtlCommands(this, (data: Partial<P2OpticalState>) => this.updateOpticalState(data), (data: Partial<P2CameraState>) => this.updateCameraState(data));
 
         this.tcpClient = new net.Socket();
         this.tcpClient.on('data', (xml: string) => this.onTcpData(xml.toString()));
@@ -71,23 +73,25 @@ export class P2CameraConnection extends EventEmitter<P2Events> {
     }
 
     private connectUdp() {
-        this.udpClient = udp.createSocket('udp4');
+        this.udpClient = this.customUdpClient ?? udp.createSocket('udp4');
 
-        this.udpClient.on('message', (msg: Buffer, info: UdpRInfo) => {
-            this.onUdpData(msg, info);
+        this.udpClient.on('message', (msg: Buffer | Uint8Array, info: UdpRInfo) => {
+            this.onUdpData(Buffer.from(msg), info);
         });
 
         try {
-            this.udpClient.bind(this.envInfo?.udpPort);
-            this.emit('log', `Opened UDP Socket on port ${this.envInfo?.udpPort}`);
+            this.emit('log', `Trying to open UDP Socket on port ${this.envInfo?.udpPort}`);
+            this.udpClient.bind(this.envInfo?.udpPort, undefined, () => {
+                this.emit('log', `Opened UDP Socket on port ${this.envInfo?.udpPort}`);
+                this.emit('log', `Connecting via UDP to ${this.host}:${this.envInfo?.udpPort}`);
+                this.udpIsOpen = true;
+                this.pollUdp();
+            });
         } catch (e) {
             this.emit('log', `Failed opening UDP Socket on port ${this.envInfo?.udpPort}: ${e}`);
             this.disconnect();
             return;
         }
-
-        this.emit('log', `Connecting via UDP to ${this.host}:${this.envInfo?.udpPort}`);
-        this.pollUdp();
     }
 
     public disconnect() {
@@ -95,6 +99,7 @@ export class P2CameraConnection extends EventEmitter<P2Events> {
         this.udpClient.close();
         this.tcpClient.destroy();
         this.udpClient = null;
+        this.udpIsOpen = false;
         this.tcpConnectionState = TcpConnectionState.Disconnected;
     }
 
@@ -123,7 +128,10 @@ export class P2CameraConnection extends EventEmitter<P2Events> {
     }
 
     private pollUdp() {
+        if (!this.udpIsOpen) return;
+
         const pollData = Buffer.from([0xff, 0x01, 0xff]);
+        this.emit('debug', "Polling UDP.");
         this.udpClient.send(pollData, this.envInfo?.udpPort, this.host, (error: any) => {
             if (!error) {
                 return;
@@ -138,14 +146,17 @@ export class P2CameraConnection extends EventEmitter<P2Events> {
         if (info.address !== this.host) {
             return;
         }
-
-        const type: UdpNotificationType = data[0];
-
-        if (type === UdpNotificationType.OpticalSetting) {
-            this.onUdpOpticalSetting(data);
-        }
-        if (type === UdpNotificationType.CameraStatus) {
-            this.onUdpCameraStatus(data);
+        try {
+            const type: UdpNotificationType = data[0];
+            if (type === UdpNotificationType.OpticalSetting) {
+                this.onUdpOpticalSetting(data);
+            }
+            if (type === UdpNotificationType.CameraStatus) {
+                this.onUdpCameraStatus(data);
+            }
+        } catch (e) {
+            console.log("ERROR Reading UDP Data");
+            console.log(e);
         }
     }
 
@@ -174,6 +185,7 @@ export class P2CameraConnection extends EventEmitter<P2Events> {
     }
 
     private onUdpOpticalSetting(data: Buffer) {
+        console.log("OPTICAL");
         const irisBuffer = data.subarray(8, 10);
         let iris: number | 'OPEN' | 'CLOSE' = irisBuffer.readUint16BE()/10;
         if (iris == 0) iris = 'OPEN';
@@ -274,8 +286,20 @@ export class P2CameraConnection extends EventEmitter<P2Events> {
             rgGainEnabled,
             frameRate
         };
-
         this.emit('opticalState', this.opticalState);
+    }
+
+    private updateOpticalState(data: Partial<P2OpticalState>) {
+        if (!this.opticalState) return;
+        this.opticalState = {...this.opticalState, ...data};
+        this.emit('opticalState', this.opticalState);
+    }
+
+    private updateCameraState(data: Partial<P2CameraState>) {
+        console.log(this.opticalState);
+        if (!this.cameraState) return;
+        this.cameraState = {...this.cameraState, ...data};
+        this.emit('cameraState', this.cameraState);
     }
 
     public getCameraState(): P2CameraState | null{

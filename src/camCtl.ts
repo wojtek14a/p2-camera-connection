@@ -1,7 +1,7 @@
-import { P2CameraConnection } from ".";
+import { P2CameraConnection, P2CameraState, P2OpticalState } from ".";
 
 export class CamCtlCommands {
-    constructor(private p2: P2CameraConnection) { }
+    constructor(private p2: P2CameraConnection, private updateOpticalState: (data: Partial<P2OpticalState>) => void, private updateCameraState: (data: Partial<P2CameraState>) => void) { }
 
     public setTally(color: 'RED'|'GREEN', state: boolean) {
         this.sendRaw(`$${color == 'RED' ? 'R' : 'G'}TlySw:=${state ? 'On' : 'Off'}`);
@@ -16,6 +16,7 @@ export class CamCtlCommands {
     }
 
     public setIris(value: number) {
+        this.updateCameraState({iris: value});
         this.sendRaw(`$Irs:=${value}`);
     }
 
