@@ -401,7 +401,8 @@ export class P2CameraConnection extends EventEmitter<P2Events> {
             'HC-X20': 'RC_SemiProApp_NodeJS',
             'AG-CX10': 'RC_AllianceApp',
             'CX350': 'RC_AllianceApp',
-            'EVA1': 'RC_AllianceApp'
+            'EVA1': 'RC_AllianceApp',
+            'AG-UX180': 'sAGApp_iOS_Ver.01.01' // $MyName:ssAGApp_iOS_Ver.01.01
         }[this.envInfo.device.modelName] ?? 'RC_P2Package_NodeJS';
 
         this.sendP2Control(`<CamCtl>$Connect:=On</CamCtl><CamCtl>$MyName:s${rcName}</CamCtl>`);
